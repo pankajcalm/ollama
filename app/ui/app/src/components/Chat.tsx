@@ -29,6 +29,7 @@ import { useSelectedModel } from "@/hooks/useSelectedModel";
 import { useUser } from "@/hooks/useUser";
 import { useHasVisionCapability } from "@/hooks/useModelCapabilities";
 import { Message } from "@/gotypes";
+import { ModelPicker } from "@/components/ModelPicker";
 
 export default function Chat({ chatId }: { chatId: string }) {
   const queryClient = useQueryClient();
@@ -154,7 +155,7 @@ export default function Chat({ chatId }: { chatId: string }) {
       webSearch: options.webSearch,
       fileTools: options.fileTools,
       think: options.think,
-      onChatEvent: (event) => {
+      onChatEvent: (event: { eventName?: string; chatId?: string }) => {
         if (event.eventName === "chat_created" && event.chatId) {
           navigate({
             to: "/c/$chatId",
@@ -202,7 +203,7 @@ export default function Chat({ chatId }: { chatId: string }) {
       hasVisionCapability={hasVisionCapability}
     >
       {chatId === "new" ? (
-        <div className="flex flex-col h-screen justify-center relative">
+        <div className="flex flex-col h-full justify-center relative bg-[var(--app-bg)]">
           <div className="px-6">
             <ChatForm
               hasMessages={false}
@@ -218,11 +219,32 @@ export default function Chat({ chatId }: { chatId: string }) {
           </div>
         </div>
       ) : (
-        <main className="flex h-screen w-full flex-col relative allow-context-menu select-none">
+        <main className="flex h-full w-full flex-col relative allow-context-menu select-none bg-[var(--app-bg)]">
+          <div className="sticky top-0 z-10 border-b border-[var(--app-border)] bg-[var(--panel-bg)]/95 px-4 py-2 backdrop-blur">
+            <div className="flex flex-wrap items-center gap-2">
+              <ModelPicker chatId={chatId} isDisabled={isDisabled} />
+              <span className={`rounded-full px-2 py-1 text-xs ${isHealthy ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300" : "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"}`}>
+                {isHealthy ? "Engine connected" : "Engine offline"}
+              </span>
+              <span className="rounded-full bg-[var(--hover-bg)] px-2 py-1 text-xs text-[var(--muted-fg)]">Streaming {isStreaming ? "on" : "idle"}</span>
+              <details className="group ml-auto">
+                <summary className="cursor-pointer rounded-md px-2 py-1 text-xs text-[var(--muted-fg)] hover:bg-[var(--hover-bg)]">Advanced</summary>
+                <div className="absolute right-4 mt-2 w-64 rounded-xl border border-[var(--app-border)] bg-[var(--panel-bg)] p-3 text-xs shadow-lg">
+                  <p className="text-[var(--muted-fg)]">Per-chat advanced controls are available through model capabilities and settings.</p>
+                  <p className="mt-2 text-[var(--muted-fg)]">Use settings for defaults (temperature, top_p, context length, seed).</p>
+                </div>
+              </details>
+            </div>
+            {!isHealthy && (
+              <p className="mt-2 rounded-md border border-amber-300/50 bg-amber-100/60 px-3 py-2 text-xs text-amber-800 dark:bg-amber-900/30 dark:text-amber-200">
+                Ollama backend is unreachable. Start the local engine and keep this window open to reconnect automatically.
+              </p>
+            )}
+          </div>
           <section
             key={chatId} // This key forces React to recreate the element when chatId changes
             ref={containerRef}
-            className={`flex-1 overflow-y-auto overscroll-contain relative min-h-0 select-none ${isWindows ? "xl:pt-4" : "xl:pt-8"}`}
+            className={`flex-1 overflow-y-auto overscroll-contain relative min-h-0 select-none ${isWindows ? "pt-2" : "pt-3"}`}
           >
             <MessageList
               messages={messages}
