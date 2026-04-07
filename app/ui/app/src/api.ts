@@ -7,6 +7,7 @@ import {
   InferenceComputeResponse,
   ModelCapabilitiesResponse,
   Model,
+  Message,
   ChatRequest,
   Settings,
   User,
@@ -38,6 +39,19 @@ export interface CloudStatusResponse {
   source: CloudStatusSource;
 }
 
+const BROWSER_DEV_SETTINGS_KEY = "ollama.browserDev.settings";
+const BROWSER_DEV_CHATS_KEY = "ollama.browserDev.chats";
+const BROWSER_DEV_CLOUD_DISABLED_KEY = "ollama.browserDev.cloudDisabled";
+
+type BrowserDevChatRecord = {
+  id: string;
+  title: string;
+  userExcerpt: string;
+  createdAt: string;
+  updatedAt: string;
+  messages: Message[];
+};
+
 const defaultSettings = new Settings({
   Expose: false,
   Browser: false,
@@ -57,7 +71,110 @@ const defaultSettings = new Settings({
   AutoUpdateEnabled: true,
 });
 
-let browserDevSettings = new Settings(defaultSettings);
+
+function isClient(): boolean {
+  return typeof window !== "undefined";
+}
+
+function loadBrowserDevSettings(): Settings {
+  if (!isClient()) {
+    return new Settings(defaultSettings);
+  }
+  const raw = localStorage.getItem(BROWSER_DEV_SETTINGS_KEY);
+  if (!raw) {
+    return new Settings(defaultSettings);
+  }
+  try {
+    return new Settings(JSON.parse(raw));
+  } catch {
+    return new Settings(defaultSettings);
+  }
+}
+
+function persistBrowserDevSettings(settings: Settings): void {
+  if (!isClient()) return;
+  localStorage.setItem(BROWSER_DEV_SETTINGS_KEY, JSON.stringify(settings));
+}
+
+function loadBrowserDevCloudDisabled(): boolean {
+  if (!isClient()) {
+    return true;
+  }
+  const raw = localStorage.getItem(BROWSER_DEV_CLOUD_DISABLED_KEY);
+  return raw === null ? true : raw === "true";
+}
+
+function persistBrowserDevCloudDisabled(disabled: boolean): void {
+  if (!isClient()) return;
+  localStorage.setItem(BROWSER_DEV_CLOUD_DISABLED_KEY, String(disabled));
+}
+
+function loadBrowserDevChats(): BrowserDevChatRecord[] {
+  if (!isClient()) {
+    return [];
+  }
+  const raw = localStorage.getItem(BROWSER_DEV_CHATS_KEY);
+  if (!raw) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed.map((chat: any) => ({
+      id: chat.id,
+      title: chat.title,
+      userExcerpt: chat.userExcerpt,
+      createdAt: chat.createdAt,
+      updatedAt: chat.updatedAt,
+      messages: (chat.messages || []).map((m: any) => new Message(m)),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+function persistBrowserDevChats(chats: BrowserDevChatRecord[]): void {
+  if (!isClient()) return;
+  localStorage.setItem(BROWSER_DEV_CHATS_KEY, JSON.stringify(chats));
+}
+
+function buildChatTitle(content: string): string {
+  const trimmed = content.trim();
+  return (trimmed || "New chat").slice(0, 60);
+}
+
+function upsertBrowserDevChat(chat: BrowserDevChatRecord): void {
+  const chats = loadBrowserDevChats();
+  const index = chats.findIndex((c) => c.id === chat.id);
+  if (index === -1) {
+    chats.push(chat);
+  } else {
+    chats[index] = chat;
+  }
+  persistBrowserDevChats(chats);
+}
+
+let browserDevSettings = loadBrowserDevSettings();
+
+function normalizeApiPath(path: string): string {
+  const withLeadingSlash = path.startsWith("/") ? path : `/${path}`;
+  if (withLeadingSlash === "/api") {
+    return "/";
+  }
+  return withLeadingSlash.startsWith("/api/")
+    ? withLeadingSlash.slice(4)
+    : withLeadingSlash;
+}
+
+function apiUrl(path: string): string {
+  return desktopApiPath(normalizeApiPath(path));
+}
+
+function engineUrl(path: string): string {
+  return engineApiPath(normalizeApiPath(path));
+}
 // Helper function to convert Uint8Array to base64
 function uint8ArrayToBase64(uint8Array: Uint8Array): string {
   const chunkSize = 0x8000; // 32KB chunks to avoid stack overflow
@@ -72,7 +189,7 @@ function uint8ArrayToBase64(uint8Array: Uint8Array): string {
 }
 
 export async function fetchUser(): Promise<User | null> {
-  const response = await fetch(desktopApiPath("/api/me"), {
+  const response = await fetch(apiUrl("/me"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -101,7 +218,7 @@ export async function fetchUser(): Promise<User | null> {
 }
 
 export async function fetchConnectUrl(): Promise<string> {
-  const response = await fetch(desktopApiPath("/api/me"), {
+  const response = await fetch(apiUrl("/me"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -119,7 +236,7 @@ export async function fetchConnectUrl(): Promise<string> {
 }
 
 export async function disconnectUser(): Promise<void> {
-  const response = await fetch(desktopApiPath("/api/signout"), {
+  const response = await fetch(apiUrl("/signout"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -132,13 +249,49 @@ export async function disconnectUser(): Promise<void> {
 }
 
 export async function getChats(): Promise<ChatsResponse> {
-  const response = await fetch(desktopApiPath("/api/v1/chats"));
+  if (IS_BROWSER_DEV) {
+    const chatInfos = loadBrowserDevChats()
+      .sort(
+        (a, b) =>
+          new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+      )
+      .map((chat) => ({
+        id: chat.id,
+        title: chat.title,
+        userExcerpt: chat.userExcerpt,
+        createdAt: chat.createdAt,
+        updatedAt: chat.updatedAt,
+      }));
+    return new ChatsResponse({ chatInfos });
+  }
+
+  const response = await fetch(apiUrl("/v1/chats"));
   const data = await response.json();
   return new ChatsResponse(data);
 }
 
 export async function getChat(chatId: string): Promise<ChatResponse> {
-  const response = await fetch(desktopApiPath(`/api/v1/chat/${chatId}`));
+  if (IS_BROWSER_DEV) {
+    const chat = loadBrowserDevChats().find((c) => c.id === chatId);
+    if (!chat) {
+      return new ChatResponse({
+        chat: {
+          id: chatId,
+          messages: [],
+          title: "New chat",
+        },
+      });
+    }
+    return new ChatResponse({
+      chat: {
+        id: chat.id,
+        title: chat.title,
+        messages: chat.messages,
+      },
+    });
+  }
+
+  const response = await fetch(apiUrl(`/v1/chat/${chatId}`));
   const data = await response.json();
   return new ChatResponse(data);
 }
@@ -274,6 +427,112 @@ export async function* sendMessage(
   forceUpdate?: boolean,
   think?: boolean | string,
 ): AsyncGenerator<ChatEventUnion> {
+  if (IS_BROWSER_DEV) {
+    const now = new Date().toISOString();
+    const activeChatId =
+      chatId === "new"
+        ? `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+        : chatId;
+    const chats = loadBrowserDevChats();
+    const existing = chats.find((c) => c.id === activeChatId);
+    const existingMessages = existing?.messages || [];
+    const nextMessages =
+      index !== undefined && index >= 0 && index < existingMessages.length
+        ? existingMessages.slice(0, index)
+        : [...existingMessages];
+
+    if (message.trim() !== "") {
+      nextMessages.push(
+        new Message({
+          role: "user",
+          content: message,
+          model: model.model,
+          attachments,
+        }),
+      );
+    }
+
+    const initialChat: BrowserDevChatRecord = {
+      id: activeChatId,
+      title: existing?.title || buildChatTitle(message),
+      userExcerpt: message.trim().slice(0, 120),
+      createdAt: existing?.createdAt || now,
+      updatedAt: now,
+      messages: nextMessages,
+    };
+
+    upsertBrowserDevChat(initialChat);
+
+    if (chatId === "new") {
+      yield new ChatEvent({ eventName: "chat_created", chatId: activeChatId });
+    }
+
+    const ollamaMessages = nextMessages
+      .filter((m) => m.role === "user" || m.role === "assistant" || m.role === "system")
+      .map((m) => ({
+        role: m.role,
+        content: m.content || "",
+      }));
+
+    const response = await fetch(engineUrl("/chat"), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: model.model,
+        messages: ollamaMessages,
+        stream: true,
+      }),
+      signal,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      yield new ErrorEvent({
+        eventName: "error",
+        error: errorText || `Chat request failed (${response.status})`,
+      });
+      return;
+    }
+
+    let assistantContent = "";
+    for await (const chunk of parseJsonlFromResponse<any>(response)) {
+      const token = chunk?.message?.content || "";
+      if (token) {
+        assistantContent += token;
+        yield new ChatEvent({ eventName: "chat", content: token });
+      }
+      if (chunk?.done) {
+        break;
+      }
+    }
+
+    const finalChats = loadBrowserDevChats();
+    const finalExisting = finalChats.find((c) => c.id === activeChatId);
+    if (finalExisting) {
+      finalExisting.messages = [
+        ...finalExisting.messages,
+        new Message({
+          role: "assistant",
+          content: assistantContent,
+          model: model.model,
+        }),
+      ];
+      finalExisting.updatedAt = new Date().toISOString();
+      if (!finalExisting.title || finalExisting.title === "New chat") {
+        finalExisting.title = buildChatTitle(message);
+      }
+      if (!finalExisting.userExcerpt) {
+        finalExisting.userExcerpt = message.trim().slice(0, 120);
+      }
+      persistBrowserDevChats(finalChats);
+    }
+
+    yield new ChatEvent({ eventName: "done" });
+    return;
+  }
+
   // Convert Uint8Array to base64 for JSON serialization
   const serializedAttachments = attachments?.map((att) => ({
     filename: att.filename,
@@ -285,7 +544,7 @@ export async function* sendMessage(
     think !== undefined &&
     (typeof think === "boolean" || (typeof think === "string" && think !== ""));
 
-  const response = await fetch(desktopApiPath(`/api/v1/chat/${chatId}`), {
+  const response = await fetch(apiUrl(`/v1/chat/${chatId}`), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -326,8 +585,12 @@ export async function* sendMessage(
 export async function getSettings(): Promise<{
   settings: Settings;
 }> {
+  if (IS_BROWSER_DEV) {
+    return { settings: browserDevSettings };
+  }
+
   try {
-    const response = await fetch(desktopApiPath("/api/v1/settings"));
+    const response = await fetch(apiUrl("/v1/settings"));
     if (!response.ok) {
       if (IS_BROWSER_DEV && response.status === 404) {
         return { settings: browserDevSettings };
@@ -351,12 +614,13 @@ export async function updateSettings(settings: Settings): Promise<{
 }> {
   if (IS_BROWSER_DEV) {
     browserDevSettings = new Settings(settings);
+    persistBrowserDevSettings(browserDevSettings);
     return {
       settings: browserDevSettings,
     };
   }
 
-  const response = await fetch(desktopApiPath("/api/v1/settings"), {
+  const response = await fetch(apiUrl("/v1/settings"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -377,13 +641,14 @@ export async function updateCloudSetting(
   enabled: boolean,
 ): Promise<CloudStatusResponse> {
   if (IS_BROWSER_DEV) {
+    persistBrowserDevCloudDisabled(!enabled);
     return {
       disabled: !enabled,
       source: "config",
     };
   }
 
-  const response = await fetch(desktopApiPath("/api/v1/cloud"), {
+  const response = await fetch(apiUrl("/v1/cloud"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -403,7 +668,18 @@ export async function updateCloudSetting(
 }
 
 export async function renameChat(chatId: string, title: string): Promise<void> {
-  const response = await fetch(desktopApiPath(`/api/v1/chat/${chatId}/rename`), {
+  if (IS_BROWSER_DEV) {
+    const chats = loadBrowserDevChats();
+    const chat = chats.find((c) => c.id === chatId);
+    if (chat) {
+      chat.title = title.trim();
+      chat.updatedAt = new Date().toISOString();
+      persistBrowserDevChats(chats);
+    }
+    return;
+  }
+
+  const response = await fetch(apiUrl(`/v1/chat/${chatId}/rename`), {
     method: "PUT",
     headers: {
       "Content-Type": "application/json",
@@ -417,7 +693,12 @@ export async function renameChat(chatId: string, title: string): Promise<void> {
 }
 
 export async function deleteChat(chatId: string): Promise<void> {
-  const response = await fetch(desktopApiPath(`/api/v1/chat/${chatId}`), {
+  if (IS_BROWSER_DEV) {
+    persistBrowserDevChats(loadBrowserDevChats().filter((c) => c.id !== chatId));
+    return;
+  }
+
+  const response = await fetch(apiUrl(`/v1/chat/${chatId}`), {
     method: "DELETE",
   });
   if (!response.ok) {
@@ -431,7 +712,7 @@ export async function getModelUpstreamInfo(
   model: Model,
 ): Promise<{ stale: boolean; exists: boolean; error?: string }> {
   try {
-    const response = await fetch(desktopApiPath("/api/v1/model/upstream"), {
+    const response = await fetch(apiUrl("/v1/model/upstream"), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -472,7 +753,7 @@ export async function* pullModel(
   completed?: number;
   done?: boolean;
 }> {
-  const response = await fetch(desktopApiPath("/api/v1/models/pull"), {
+  const response = await fetch(apiUrl("/v1/models/pull"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -497,8 +778,12 @@ export async function* pullModel(
 }
 
 export async function getInferenceCompute(): Promise<InferenceComputeResponse> {
+  if (IS_BROWSER_DEV) {
+    return new InferenceComputeResponse({ inferenceComputes: [] });
+  }
+
   try {
-    const response = await fetch(desktopApiPath("/api/v1/inference-compute"));
+    const response = await fetch(apiUrl("/v1/inference-compute"));
     if (!response.ok) {
       if (IS_BROWSER_DEV && response.status === 404) {
         return new InferenceComputeResponse({ inferenceComputes: [] });
@@ -521,13 +806,13 @@ export async function getInferenceCompute(): Promise<InferenceComputeResponse> {
 export async function fetchHealth(): Promise<boolean> {
   try {
     const [versionResponse, tagsResponse] = await Promise.all([
-      fetch(engineApiPath("/version"), {
+      fetch(engineUrl("/version"), {
         method: "GET",
         headers: {
           "Content-Type": "application/json",
         },
       }),
-      fetch(engineApiPath("/tags"), {
+      fetch(engineUrl("/tags"), {
         method: "GET",
         headers: {
           "Content-Type": "application/json",
@@ -552,8 +837,15 @@ export async function fetchHealth(): Promise<boolean> {
 }
 
 export async function getCloudStatus(): Promise<CloudStatusResponse | null> {
+  if (IS_BROWSER_DEV) {
+    return {
+      disabled: loadBrowserDevCloudDisabled(),
+      source: "config",
+    };
+  }
+
   try {
-    const response = await fetch(desktopApiPath("/api/v1/cloud"));
+    const response = await fetch(apiUrl("/v1/cloud"));
     if (!response.ok) {
       if (IS_BROWSER_DEV && response.status === 404) {
         return {
