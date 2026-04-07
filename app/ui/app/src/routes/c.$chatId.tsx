@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useChat } from "@/hooks/useChats";
 import Chat from "@/components/Chat";
 import { getChat } from "@/api";
-import { SidebarLayout } from "@/components/layout/layout";
+import { AppShell } from "@/components/shell/AppShell";
 import { ChatSidebar } from "@/components/ChatSidebar";
 import LaunchCommands from "@/components/LaunchCommands";
 import { useEffect } from "react";
@@ -64,48 +64,48 @@ function RouteComponent() {
   // Handle "new" chat case - just use Chat component which handles everything
   if (chatId === "new") {
     return (
-      <SidebarLayout sidebar={<ChatSidebar currentChatId={chatId} />}>
+      <AppShell sidebar={<ChatSidebar currentChatId={chatId} />}>
         <Chat chatId={chatId} />
-      </SidebarLayout>
+      </AppShell>
     );
   }
 
   if (chatId === "launch") {
     return (
-      <SidebarLayout sidebar={<ChatSidebar currentChatId={chatId} />}>
+      <AppShell sidebar={<ChatSidebar currentChatId={chatId} />}>
         <LaunchCommands />
-      </SidebarLayout>
+      </AppShell>
     );
   }
 
   // Handle existing chat case
   if (chatLoading) {
     return (
-      <SidebarLayout sidebar={<ChatSidebar currentChatId={chatId} />}>
+      <AppShell sidebar={<ChatSidebar currentChatId={chatId} />}>
         <div className="p-4">Loading chat...</div>
-      </SidebarLayout>
+      </AppShell>
     );
   }
 
   if (chatError) {
     return (
-      <SidebarLayout sidebar={<ChatSidebar currentChatId={chatId} />}>
+      <AppShell sidebar={<ChatSidebar currentChatId={chatId} />}>
         <div className="p-4 text-red-500">Error loading chat</div>
-      </SidebarLayout>
+      </AppShell>
     );
   }
 
   if (!chatData) {
     return (
-      <SidebarLayout sidebar={<ChatSidebar currentChatId={chatId} />}>
+      <AppShell sidebar={<ChatSidebar currentChatId={chatId} />}>
         <div className="p-4">Chat not found</div>
-      </SidebarLayout>
+      </AppShell>
     );
   }
 
   return (
-    <SidebarLayout sidebar={<ChatSidebar currentChatId={chatId} />}>
+    <AppShell sidebar={<ChatSidebar currentChatId={chatId} />}>
       <Chat chatId={chatId} />
-    </SidebarLayout>
+    </AppShell>
   );
 }

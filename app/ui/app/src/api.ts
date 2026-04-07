@@ -176,6 +176,42 @@ export async function getModels(query?: string): Promise<Model[]> {
   }
 }
 
+
+
+export interface DetailedModel {
+  name: string;
+  sizeLabel: string;
+  tagsLabel: string;
+  modifiedAt: number;
+}
+
+function formatBytes(bytes: number): string {
+  if (!bytes || bytes <= 0) return "Unknown size";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value.toFixed(value >= 10 ? 0 : 1)} ${units[unit]}`;
+}
+
+export async function getDetailedModels(): Promise<DetailedModel[]> {
+  const { models } = await ollama.list();
+  return (models || []).map((m: any) => ({
+    name: m.name?.replace(/:latest$/, "") || "unknown",
+    sizeLabel: formatBytes(Number(m.size || 0)),
+    tagsLabel: Array.isArray(m.details?.families) && m.details.families.length > 0
+      ? m.details.families.join(", ")
+      : "No tags",
+    modifiedAt: m.modified_at ? new Date(m.modified_at).getTime() : 0,
+  }));
+}
+
+export async function deleteModel(modelName: string): Promise<void> {
+  await (ollama as any).delete({ model: modelName });
+}
 export async function getModelCapabilities(
   modelName: string,
 ): Promise<ModelCapabilitiesResponse> {

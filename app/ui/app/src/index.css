@@ -8,16 +8,26 @@
     "SF Pro Rounded", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
 }
 
+:root {
+  --app-bg: #f8fafc;
+  --panel-bg: #ffffff;
+  --app-fg: #0f172a;
+  --muted-fg: #64748b;
+  --app-border: #e2e8f0;
+  --hover-bg: #f1f5f9;
+}
+
 @media (prefers-color-scheme: dark) {
-  /* Dark mode styles go here */
   :root {
-    /* Example dark mode variables */
-    --bg-color: #1a1a1a;
-    --text-color: #ffffff;
+    --app-bg: #0a0a0a;
+    --panel-bg: #111315;
+    --app-fg: #e5e7eb;
+    --muted-fg: #94a3b8;
+    --app-border: #27272a;
+    --hover-bg: #1f2937;
   }
 }
 
-/* messaging-style typing indicator animation */
 @keyframes typing {
   0%,
   60%,

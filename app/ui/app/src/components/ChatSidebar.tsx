@@ -4,14 +4,17 @@ import { useDeleteChat } from "@/hooks/useDeleteChat";
 import { useQueryClient } from "@tanstack/react-query";
 import { getChat } from "@/api";
 import { Link } from "@/components/ui/link";
-import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo, type MouseEvent } from "react";
 import { ChatsResponse } from "@/gotypes";
-import { CogIcon, RocketLaunchIcon } from "@heroicons/react/24/outline";
+import {
+  Cog6ToothIcon,
+  RocketLaunchIcon,
+  MagnifyingGlassIcon,
+  BookOpenIcon,
+} from "@heroicons/react/24/outline";
 
-// there's a hidden debug feature to copy a chat's data to the clipboard by
-// holding shift and clicking this many times within this many seconds
 const DEBUG_SHIFT_CLICKS_REQUIRED = 5;
-const DEBUG_SHIFT_CLICK_WINDOW_MS = 7000; // 7 seconds
+const DEBUG_SHIFT_CLICK_WINDOW_MS = 7000;
 
 interface ChatSidebarProps {
   currentChatId?: string;
@@ -24,9 +27,9 @@ export function ChatSidebar({ currentChatId }: ChatSidebarProps) {
   const deleteMutation = useDeleteChat();
   const [editingChatId, setEditingChatId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
+  const [search, setSearch] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const [shiftClicks, setShiftClicks] = useState<Record<string, number[]>>({});
-  const [copiedChatId, setCopiedChatId] = useState<string | null>(null);
 
   const handleMouseEnter = useCallback(
     (chatId: string) => {
@@ -39,11 +42,6 @@ export function ChatSidebar({ currentChatId }: ChatSidebarProps) {
     [queryClient],
   );
 
-  const startEditing = useCallback((chatId: string, currentTitle: string) => {
-    setEditingChatId(chatId);
-    setEditValue(currentTitle);
-  }, []);
-
   const saveRename = useCallback(async () => {
     if (!editingChatId || !editValue.trim()) {
       setEditingChatId(null);
@@ -52,33 +50,22 @@ export function ChatSidebar({ currentChatId }: ChatSidebarProps) {
 
     const newTitle = editValue.trim();
     const chatId = editingChatId;
-
-    // Exit edit mode immediately to prevent flash
     setEditingChatId(null);
     setEditValue("");
 
-    // Optimistically update the cache
-    queryClient.setQueryData(
-      ["chats"],
-      (oldData: ChatsResponse | undefined) => {
-        if (!oldData?.chatInfos) return oldData;
-        return {
-          ...oldData,
-          chatInfos: oldData.chatInfos.map((chat) =>
-            chat.id === chatId ? { ...chat, title: newTitle } : chat,
-          ),
-        };
-      },
-    );
+    queryClient.setQueryData(["chats"], (oldData: ChatsResponse | undefined) => {
+      if (!oldData?.chatInfos) return oldData;
+      return {
+        ...oldData,
+        chatInfos: oldData.chatInfos.map((chat) =>
+          chat.id === chatId ? { ...chat, title: newTitle } : chat,
+        ),
+      };
+    });
 
     try {
-      await renameMutation.mutateAsync({
-        chatId: chatId,
-        title: newTitle,
-      });
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    } catch (error: unknown) {
-      // Revert optimistic update on error
+      await renameMutation.mutateAsync({ chatId, title: newTitle });
+    } catch {
       queryClient.invalidateQueries({ queryKey: ["chats"] });
     }
   }, [editingChatId, editValue, renameMutation, queryClient]);
@@ -90,300 +77,155 @@ export function ChatSidebar({ currentChatId }: ChatSidebarProps) {
     }
   }, [editingChatId]);
 
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (
-        inputRef.current &&
-        !inputRef.current.contains(event.target as Node)
-      ) {
-        saveRename();
-      }
-    };
-
-    if (editingChatId) {
-      document.addEventListener("mousedown", handleClickOutside);
-      return () => {
-        document.removeEventListener("mousedown", handleClickOutside);
-      };
-    }
-  }, [editingChatId, editValue, saveRename]);
-
   const sortedChats = useMemo(() => {
     if (!data?.chatInfos) return [];
-    return [...data.chatInfos].sort((a, b) => {
-      const comparison = b.updatedAt.getTime() - a.updatedAt.getTime();
-      if (comparison === 0) {
-        return b.id.localeCompare(a.id);
-      }
-      return comparison;
-    });
+    return [...data.chatInfos].sort(
+      (a, b) => b.updatedAt.getTime() - a.updatedAt.getTime(),
+    );
   }, [data?.chatInfos]);
 
-  const isToday = (date: Date) => {
-    const today = new Date();
-    return (
-      date.getDate() === today.getDate() &&
-      date.getMonth() === today.getMonth() &&
-      date.getFullYear() === today.getFullYear()
+  const filteredChats = useMemo(() => {
+    type ChatInfo = NonNullable<ChatsResponse["chatInfos"]>[number];
+    const query = search.toLowerCase().trim();
+    if (!query) return sortedChats;
+    return sortedChats.filter((chat: ChatInfo) =>
+      `${chat.title || ""} ${chat.userExcerpt || ""}`.toLowerCase().includes(query),
     );
-  };
+  }, [search, sortedChats]);
 
-  const isThisWeek = (date: Date) => {
-    const now = new Date();
-    const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    return date > weekAgo && !isToday(date);
-  };
-
-  // Group chats by time period
-  const groupedChats = useMemo(() => {
-    const groups = {
-      today: [] as typeof sortedChats,
-      thisWeek: [] as typeof sortedChats,
-      older: [] as typeof sortedChats,
-    };
-
-    sortedChats.forEach((chat) => {
-      if (isToday(chat.updatedAt)) {
-        groups.today.push(chat);
-      } else if (isThisWeek(chat.updatedAt)) {
-        groups.thisWeek.push(chat);
-      } else {
-        groups.older.push(chat);
-      }
-    });
-
-    return groups;
-  }, [sortedChats]);
-
-  const chatGroups = useMemo(() => {
-    return [
-      { name: "Today", chats: groupedChats.today },
-      { name: "This week", chats: groupedChats.thisWeek },
-      { name: "Older", chats: groupedChats.older },
-    ].filter((group) => group.chats.length > 0);
-  }, [groupedChats]);
+  const pinnedChats = filteredChats.slice(0, 3);
+  const recentChats = filteredChats.slice(3);
 
   const handleDeleteChat = useCallback(
     async (chatId: string) => {
-      const confirmed = window.confirm(
-        `Are you sure you want to remove this chat?`,
-      );
-
-      if (!confirmed) return;
-
+      if (!window.confirm("Delete this chat?")) return;
       try {
         await deleteMutation.mutateAsync(chatId);
-      } catch (error) {
-        console.error("Failed to delete chat:", error);
+      } catch (err) {
+        console.error("Failed to delete chat", err);
       }
     },
     [deleteMutation],
   );
 
-  // implementation of the hidden debug feature to copy a chat's data to the clipboard
   const handleShiftClick = useCallback(
-    async (e: React.MouseEvent, chatId: string) => {
-      if (!e.shiftKey) return false;
-
+    async (e: MouseEvent, chatId: string) => {
+      if (!e.shiftKey) return;
       e.preventDefault();
       const now = Date.now();
-
       const clicks = shiftClicks[chatId] || [];
-      const recentClicks = clicks.filter(
-        (timestamp) => now - timestamp < DEBUG_SHIFT_CLICK_WINDOW_MS,
-      );
+      const recentClicks = clicks.filter((timestamp: number) => now - timestamp < DEBUG_SHIFT_CLICK_WINDOW_MS);
       recentClicks.push(now);
-
-      setShiftClicks((prev) => ({
-        ...prev,
-        [chatId]: recentClicks,
-      }));
-
+      setShiftClicks((prev: Record<string, number[]>) => ({ ...prev, [chatId]: recentClicks }));
       if (recentClicks.length >= DEBUG_SHIFT_CLICKS_REQUIRED) {
-        try {
-          const chatData = await getChat(chatId);
-          const jsonString = JSON.stringify(chatData, null, 2);
-          await navigator.clipboard.writeText(jsonString);
-
-          // visual feedback
-          setCopiedChatId(chatId);
-          setTimeout(() => setCopiedChatId(null), 2000);
-
-          setShiftClicks((prev) => ({
-            ...prev,
-            [chatId]: [],
-          }));
-        } catch (error) {
-          console.error("Failed to copy chat data:", error);
-        }
+        const chatData = await getChat(chatId);
+        await navigator.clipboard.writeText(JSON.stringify(chatData, null, 2));
+        setShiftClicks((prev: Record<string, number[]>) => ({ ...prev, [chatId]: [] }));
       }
-
-      return true;
     },
     [shiftClicks],
   );
 
   const handleContextMenu = useCallback(
-    async (_: React.MouseEvent, chatId: string, chatTitle: string) => {
+    async (_: MouseEvent, chatId: string, chatTitle: string) => {
       const selectedAction = await window.menu([
         { label: "Rename", enabled: true },
         { label: "Delete", enabled: true },
       ]);
 
       if (selectedAction === "Rename") {
-        startEditing(chatId, chatTitle);
-      } else if (selectedAction === "Delete") {
+        setEditingChatId(chatId);
+        setEditValue(chatTitle);
+      }
+      if (selectedAction === "Delete") {
         handleDeleteChat(chatId);
       }
     },
-    [startEditing, handleDeleteChat],
+    [handleDeleteChat],
   );
 
-  if (isLoading) {
-    return (
-      <nav className="flex min-h-0 flex-col">
-        <div className="flex flex-1 flex-col p-4">
-          <div className="p-4">Loading...</div>
-        </div>
-      </nav>
-    );
-  }
-
-  if (error) {
-    return (
-      <nav className="flex min-h-0 flex-col">
-        <div className="flex flex-1 flex-col p-4">
-          <div className="p-4 text-red-500">Error loading chats</div>
-        </div>
-      </nav>
-    );
-  }
-
-  const isWindows = navigator.platform.toLowerCase().includes("win");
+  const renderSection = (title: string, chats: typeof filteredChats) => (
+    <section className="space-y-1" aria-label={title}>
+      <h3 className="px-2 text-xs font-semibold uppercase tracking-wider text-[var(--muted-fg)]">{title}</h3>
+      {chats.length === 0 ? (
+        <p className="px-2 text-sm text-[var(--muted-fg)]">No chats</p>
+      ) : (
+        chats.map((chat: NonNullable<ChatsResponse["chatInfos"]>[number]) => {
+          const label = chat.title || chat.userExcerpt || chat.createdAt.toLocaleString();
+          return (
+            <div
+              key={chat.id}
+              className={`rounded-lg ${chat.id === currentChatId ? "bg-[var(--hover-bg)]" : "hover:bg-[var(--hover-bg)]"}`}
+              onMouseEnter={() => handleMouseEnter(chat.id)}
+              onContextMenu={(e) => handleContextMenu(e, chat.id, label)}
+            >
+              {editingChatId === chat.id ? (
+                <input
+                  ref={inputRef}
+                  value={editValue}
+                  onChange={(e) => setEditValue(e.target.value)}
+                  onBlur={saveRename}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") saveRename();
+                    if (e.key === "Escape") setEditingChatId(null);
+                  }}
+                  className="w-full rounded-lg bg-transparent px-3 py-2 text-sm focus:outline-none"
+                />
+              ) : (
+                <Link
+                  to="/c/$chatId"
+                  params={{ chatId: chat.id }}
+                  className="block truncate px-3 py-2 text-sm"
+                  onClick={(e) => handleShiftClick(e, chat.id)}
+                >
+                  {label}
+                </Link>
+              )}
+            </div>
+          );
+        })
+      )}
+    </section>
+  );
 
   return (
-    <nav className="flex flex-1 flex-col min-h-0 select-none">
-      <header className="flex flex-col gap-0.5 px-4 pb-2">
-        <Link
-          href="/c/new"
-          mask={{ to: "/" }}
-          className={`flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left text-sm text-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 dark:text-neutral-100 ${currentChatId === "new" ? "bg-neutral-100 dark:bg-neutral-800" : ""
-            }`}
-          draggable={false}
-        >
-          <svg
-            className="h-5 w-5 fill-current"
-            viewBox="0 0 24 24"
-            fill="none"
-            xmlns="http://www.w3.org/2000/svg"
-          >
-            <path d="M17.0859 3.39949L15.2135 5.27196H7.27028C5.78649 5.27196 4.94684 6.11336 4.94684 7.59716V16.664C4.94684 18.1558 5.78649 18.9892 7.27028 18.9892H16.3406C17.8324 18.9892 18.6623 18.1558 18.6623 16.664V8.79514L20.5428 6.9115C20.567 7.11532 20.5773 7.33066 20.5773 7.55419V16.7149C20.5773 19.4069 19.0818 20.9024 16.3898 20.9024H7.22107C4.53708 20.9024 3.03357 19.4069 3.03357 16.7149V7.55419C3.03357 4.8622 4.53708 3.35869 7.22107 3.35869H16.3898C16.6329 3.35869 16.8662 3.37094 17.0859 3.39949Z" />
-            <path d="M9.92714 14.381L11.914 13.5403L20.8312 4.63114L19.3404 3.1581L10.433 12.0655L9.55234 13.9964C9.45664 14.2169 9.70293 14.4714 9.92714 14.381ZM21.5767 3.89364L22.2588 3.19384C22.6347 2.80184 22.6435 2.2663 22.2711 1.90536L22.0148 1.64287C21.6822 1.31377 21.1334 1.36513 20.7689 1.72158L20.0859 2.39833L21.5767 3.89364Z" />
-          </svg>
-          <span className="truncate">New Chat</span>
+    <nav className="flex min-h-0 flex-1 flex-col p-3">
+      <Link href="/c/new" mask={{ to: "/" }} className="mb-3 rounded-lg bg-blue-600 px-3 py-2 text-center text-sm font-medium text-white hover:bg-blue-500">
+        + New chat
+      </Link>
+
+      <div className="mb-3 flex items-center gap-2 rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] px-2 py-1.5">
+        <MagnifyingGlassIcon className="h-4 w-4 text-[var(--muted-fg)]" />
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search chats"
+          className="w-full bg-transparent text-sm outline-none"
+          aria-label="Search chats"
+        />
+      </div>
+
+      <div className="mb-3 grid grid-cols-1 gap-1">
+        <Link to="/c/$chatId" params={{ chatId: "launch" }} className="flex items-center gap-2 rounded-lg px-2 py-2 text-sm hover:bg-[var(--hover-bg)]">
+          <RocketLaunchIcon className="h-4 w-4" /> Launch
         </Link>
-        <Link
-          to="/c/$chatId"
-          params={{ chatId: "launch" }}
-          className={`flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left text-sm text-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 dark:text-neutral-100 cursor-pointer ${currentChatId === "launch"
-            ? "bg-neutral-100 dark:bg-neutral-800"
-            : ""
-            }`}
-          draggable={false}
-        >
-          <RocketLaunchIcon className="h-5 w-5 stroke-current" />
-          <span className="truncate">Launch</span>
+        <Link href="/models" className="flex items-center gap-2 rounded-lg px-2 py-2 text-sm hover:bg-[var(--hover-bg)]">
+          <BookOpenIcon className="h-4 w-4" /> Model Library
         </Link>
-        {isWindows && (
-          <Link
-            href="/settings"
-            className={`flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left text-sm text-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 dark:text-neutral-300`}
-            draggable={false}
-          >
-            <CogIcon className="h-5 w-5 stroke-current" />
-            <span className="truncate">Settings</span>
-          </Link>
+        <Link href="/settings" className="flex items-center gap-2 rounded-lg px-2 py-2 text-sm hover:bg-[var(--hover-bg)]">
+          <Cog6ToothIcon className="h-4 w-4" /> Settings
+        </Link>
+      </div>
+
+      <div className="flex-1 space-y-4 overflow-y-auto pr-1">
+        {isLoading && <p className="text-sm text-[var(--muted-fg)]">Loading chats...</p>}
+        {error && <p className="text-sm text-red-500">Could not load chats.</p>}
+        {!isLoading && !error && (
+          <>
+            {renderSection("Pinned", pinnedChats)}
+            {renderSection("Recent", recentChats)}
+          </>
         )}
-      </header>
-      <div className="flex flex-1 flex-col px-4 py-1 overflow-y-auto overscroll-auto scrollbar-gutter">
-        <div className="flex flex-col gap-3 pt-4">
-          {chatGroups.map((group) => (
-            <div key={group.name} className="flex flex-col gap-0.5">
-              <h3 className="text-xs font-medium text-neutral-400 dark:text-neutral-500 px-2 py-1 select-none">
-                {group.name}
-              </h3>
-              {group.chats.map((chat) => (
-                <div
-                  key={chat.id}
-                  className={`allow-context-menu flex items-center relative text-sm text-neutral-800 dark:text-neutral-400 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 ${chat.id === currentChatId
-                    ? "bg-neutral-100 text-black dark:bg-neutral-800"
-                    : ""
-                    }`}
-                  onMouseEnter={() => handleMouseEnter(chat.id)}
-                  onContextMenu={(e) =>
-                    handleContextMenu(
-                      e,
-                      chat.id,
-                      chat.title ||
-                      chat.userExcerpt ||
-                      chat.createdAt.toLocaleString(),
-                    )
-                  }
-                >
-                  {editingChatId === chat.id ? (
-                    <div className="flex-1 flex items-center min-w-0 px-2 py-2 bg-neutral-100 text-black dark:bg-neutral-800 rounded-lg">
-                      <span className="truncate font-sans text-sm w-full">
-                        <input
-                          ref={inputRef}
-                          type="text"
-                          value={editValue}
-                          onChange={(e) => setEditValue(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") {
-                              e.preventDefault();
-                              saveRename();
-                            } else if (e.key === "Escape") {
-                              setEditingChatId(null);
-                              setEditValue("");
-                            }
-                          }}
-                          className="bg-transparent border-0 focus:outline-none w-full dark:text-white"
-                          style={{
-                            font: "inherit",
-                            lineHeight: "inherit",
-                            padding: 0,
-                            margin: 0,
-                          }}
-                        />
-                      </span>
-                    </div>
-                  ) : (
-                    <Link
-                      to="/c/$chatId"
-                      params={{ chatId: chat.id }}
-                      className="flex-1 flex items-center min-w-0 px-2 py-2 select-none"
-                      onClick={(e) => {
-                        handleShiftClick(e, chat.id);
-                      }}
-                      draggable={false}
-                    >
-                      <span className="truncate font-sans text-sm">
-                        {chat.title ||
-                          chat.userExcerpt ||
-                          chat.createdAt.toLocaleString()}
-                      </span>
-                      {copiedChatId === chat.id && (
-                        <span className="ml-2 text-xs text-green-600 dark:text-green-400">
-                          Copied!
-                        </span>
-                      )}
-                    </Link>
-                  )}
-                </div>
-              ))}
-            </div>
-          ))}
-        </div>
       </div>
     </nav>
   );
