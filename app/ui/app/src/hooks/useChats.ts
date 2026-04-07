@@ -9,6 +9,42 @@ import { useStreamingContext } from "@/contexts/StreamingContext";
 import { getModelCapabilities } from "@/api";
 import { useCloudStatus } from "./useCloudStatus";
 
+
+
+type ChatQueryData = { chat: Chat };
+
+const ensureChatState = (
+  old: ChatQueryData | undefined,
+  chatId: string,
+  model?: Model,
+): { base: ChatQueryData; chat: Chat; messages: Message[] } => {
+  const base =
+    old?.chat
+      ? old
+      : {
+          ...(old ?? {}),
+          chat: new Chat({
+            id: chatId,
+            title: "New chat",
+            ...(model ? { model } : {}),
+            messages: [],
+          }),
+        };
+
+  const chat =
+    base.chat ||
+    new Chat({
+      id: chatId,
+      title: "New chat",
+      ...(model ? { model } : {}),
+      messages: [],
+    });
+
+  const messages = chat.messages ?? [];
+
+  return { base, chat, messages };
+};
+
 export const useChats = () => {
   return useQuery({
     queryKey: ["chats"],
@@ -266,16 +302,19 @@ export const useSendMessage = (chatId: string) => {
           // Optimistically add the user message
           queryClient.setQueryData(
             ["chat", chatId],
-            (old: { chat: Chat } | undefined) => {
-              if (!old) return old;
-
+            (old: ChatQueryData | undefined) => {
+              const { base, chat, messages: existingMessages } = ensureChatState(
+                old,
+                chatId,
+                effectiveModel,
+              );
               const newMessage = new Message({
                 role: "user",
                 content: message,
                 attachments: attachments,
               });
 
-              let messages = old.chat.messages || [];
+              let messages = [...existingMessages];
 
               // If editing a message (index provided), truncate messages array
               if (
@@ -287,9 +326,9 @@ export const useSendMessage = (chatId: string) => {
               }
 
               return {
-                ...old,
+                ...base,
                 chat: new Chat({
-                  ...old.chat,
+                  ...chat,
                   messages: [...messages, newMessage],
                 }),
               };
@@ -337,7 +376,7 @@ export const useSendMessage = (chatId: string) => {
 
       // Create batcher for streaming updates with smoother intervals, prevents state update depth being exceeded
       // and allows for smoother updates at high frame rates
-      let batcher = createQueryBatcher<{ chat: Chat }>(
+      let batcher = createQueryBatcher<ChatQueryData>(
         queryClient,
         ["chat", currentChatId],
         { batchInterval: 4, immediateFirst: true }, // ~250fps for smoother updates
@@ -367,10 +406,12 @@ export const useSendMessage = (chatId: string) => {
         switch (event.eventName) {
           case "chat": {
             // Update the current chat data with streaming content
-            batcher.scheduleBatch((old: { chat: Chat } | undefined) => {
-              if (!old) return old;
-
-              const existingMessages = old.chat.messages || [];
+            batcher.scheduleBatch((old: ChatQueryData | undefined) => {
+              const { base, chat, messages: existingMessages } = ensureChatState(
+                old,
+                currentChatId,
+                effectiveModel,
+              );
               const newMessages = [...existingMessages];
 
               // Find or create the assistant message
@@ -408,9 +449,9 @@ export const useSendMessage = (chatId: string) => {
               }
 
               return {
-                ...old,
+                ...base,
                 chat: new Chat({
-                  ...old.chat,
+                  ...chat,
                   messages: newMessages,
                 }),
               };
@@ -419,10 +460,12 @@ export const useSendMessage = (chatId: string) => {
           }
           case "thinking": {
             // Handle thinking content
-            batcher.scheduleBatch((old: { chat: Chat } | undefined) => {
-              if (!old) return old;
-
-              const existingMessages = old.chat.messages || [];
+            batcher.scheduleBatch((old: ChatQueryData | undefined) => {
+              const { base, chat, messages: existingMessages } = ensureChatState(
+                old,
+                currentChatId,
+                effectiveModel,
+              );
               const newMessages = [...existingMessages];
 
               // Find or create the assistant message
@@ -454,9 +497,9 @@ export const useSendMessage = (chatId: string) => {
               }
 
               return {
-                ...old,
+                ...base,
                 chat: new Chat({
-                  ...old.chat,
+                  ...chat,
                   messages: newMessages,
                 }),
               };
@@ -468,10 +511,9 @@ export const useSendMessage = (chatId: string) => {
             // but kept for backward compatibility, potentially still good for normal tool calling models
             queryClient.setQueryData(
               ["chat", currentChatId],
-              (old: { chat: Chat } | undefined) => {
-                if (!old) return old;
-
-                const existingMessages = old.chat.messages || [];
+              (old: ChatQueryData | undefined) => {
+                const { base, chat, messages: existingMessages } =
+                  ensureChatState(old, currentChatId, effectiveModel);
                 const newMessages = [...existingMessages];
 
                 // Add tool call message
@@ -488,9 +530,9 @@ export const useSendMessage = (chatId: string) => {
                 }
 
                 return {
-                  ...old,
+                  ...base,
                   chat: new Chat({
-                    ...old.chat,
+                    ...chat,
                     messages: newMessages,
                   }),
                 };
@@ -502,10 +544,9 @@ export const useSendMessage = (chatId: string) => {
             // Handle assistant messages that include tool calls
             queryClient.setQueryData(
               ["chat", currentChatId],
-              (old: { chat: Chat } | undefined) => {
-                if (!old) return old;
-
-                const existingMessages = old.chat.messages || [];
+              (old: ChatQueryData | undefined) => {
+                const { base, chat, messages: existingMessages } =
+                  ensureChatState(old, currentChatId, effectiveModel);
                 const newMessages = [...existingMessages];
 
                 // Find the last assistant message and update it with tool calls
@@ -539,9 +580,9 @@ export const useSendMessage = (chatId: string) => {
                 }
 
                 return {
-                  ...old,
+                  ...base,
                   chat: new Chat({
-                    ...old.chat,
+                    ...chat,
                     messages: newMessages,
                   }),
                 };
@@ -553,10 +594,9 @@ export const useSendMessage = (chatId: string) => {
             // Handle tool result events
             queryClient.setQueryData(
               ["chat", currentChatId],
-              (old: { chat: Chat } | undefined) => {
-                if (!old) return old;
-
-                const existingMessages = old.chat.messages || [];
+              (old: ChatQueryData | undefined) => {
+                const { base, chat, messages: existingMessages } =
+                  ensureChatState(old, currentChatId, effectiveModel);
                 const newMessages = [...existingMessages];
 
                 newMessages.push(
@@ -577,11 +617,11 @@ export const useSendMessage = (chatId: string) => {
                 );
 
                 return {
-                  ...old,
+                  ...base,
                   chat: new Chat({
-                    ...old.chat,
+                    ...chat,
                     messages: newMessages,
-                    browser_state: event.toolState ?? old.chat.browser_state,
+                    browser_state: event.toolState ?? chat.browser_state,
                   }),
                 };
               },
@@ -689,26 +729,40 @@ export const useSendMessage = (chatId: string) => {
             batcher.flushBatch();
             batcher.cleanup();
             currentChatId = newId;
-            batcher = createQueryBatcher<{ chat: Chat }>(
+            batcher = createQueryBatcher<ChatQueryData>(
               queryClient,
               ["chat", currentChatId],
               { batchInterval: 4, immediateFirst: true },
             );
 
             // Create initial chat data for the new chat
-            queryClient.setQueryData(["chat", newId], {
-              chat: new Chat({
-                id: newId,
-                model: effectiveModel,
-                messages: [
-                  new Message({
-                    role: "user",
-                    content: message,
-                    attachments: attachments,
+            queryClient.setQueryData(
+              ["chat", newId],
+              (old: ChatQueryData | undefined) => {
+                const { base, chat, messages: existingMessages } =
+                  ensureChatState(old, newId, effectiveModel);
+                const initialMessages =
+                  message.trim() !== ""
+                    ? [
+                        ...existingMessages,
+                        new Message({
+                          role: "user",
+                          content: message,
+                          attachments: attachments,
+                        }),
+                      ]
+                    : [...existingMessages];
+                return {
+                  ...base,
+                  chat: new Chat({
+                    ...chat,
+                    id: newId,
+                    model: effectiveModel,
+                    messages: initialMessages,
                   }),
-                ],
-              }),
-            });
+                };
+              },
+            );
 
             // Cancel the old "new" chat query if it exists
             if (chatId === "new") {
