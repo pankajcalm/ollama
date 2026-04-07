@@ -1,4 +1,5 @@
 import {
+  Chat,
   ChatResponse,
   ChatsResponse,
   ChatEvent,
@@ -245,19 +246,19 @@ export async function getChats(): Promise<ChatsResponse> {
 
 export async function getChat(chatId: string): Promise<ChatResponse> {
   if (IS_BROWSER_DEV) {
-    const chat = loadBrowserDevChats().find((c) => c.id === chatId)
-	 return new ChatResponse({
-	  chat: new Chat({
-		id: chatId,
-		title: chat?.title || "New chat",
-		messages: chat?.messages || [],
-	  }),
-	})
+    const chat = loadBrowserDevChats().find((c) => c.id === chatId);
+    return new ChatResponse({
+      chat: new Chat({
+        id: chatId,
+        title: chat?.title || "New chat",
+        messages: chat?.messages || [],
+      }),
+    });
   }
 
-  const response = await fetch(apiUrl(`/v1/chat/${chatId}`))
-  const data = await response.json()
-  return new ChatResponse(data)
+  const response = await fetch(apiUrl(`/v1/chat/${chatId}`));
+  const data = await response.json();
+  return new ChatResponse(data);
 }
 
 export async function getModels(query?: string): Promise<Model[]> {
