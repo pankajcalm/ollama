@@ -72,91 +72,7 @@ const defaultSettings = new Settings({
 });
 
 
-function isClient(): boolean {
-  return typeof window !== "undefined";
-}
-
-function loadBrowserDevSettings(): Settings {
-  if (!isClient()) {
-    return new Settings(defaultSettings);
-  }
-  const raw = localStorage.getItem(BROWSER_DEV_SETTINGS_KEY);
-  if (!raw) {
-    return new Settings(defaultSettings);
-  }
-  try {
-    return new Settings(JSON.parse(raw));
-  } catch {
-    return new Settings(defaultSettings);
-  }
-}
-
-function persistBrowserDevSettings(settings: Settings): void {
-  if (!isClient()) return;
-  localStorage.setItem(BROWSER_DEV_SETTINGS_KEY, JSON.stringify(settings));
-}
-
-function loadBrowserDevCloudDisabled(): boolean {
-  if (!isClient()) {
-    return true;
-  }
-  const raw = localStorage.getItem(BROWSER_DEV_CLOUD_DISABLED_KEY);
-  return raw === null ? true : raw === "true";
-}
-
-function persistBrowserDevCloudDisabled(disabled: boolean): void {
-  if (!isClient()) return;
-  localStorage.setItem(BROWSER_DEV_CLOUD_DISABLED_KEY, String(disabled));
-}
-
-function loadBrowserDevChats(): BrowserDevChatRecord[] {
-  if (!isClient()) {
-    return [];
-  }
-  const raw = localStorage.getItem(BROWSER_DEV_CHATS_KEY);
-  if (!raw) {
-    return [];
-  }
-  try {
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-    return parsed.map((chat: any) => ({
-      id: chat.id,
-      title: chat.title,
-      userExcerpt: chat.userExcerpt,
-      createdAt: chat.createdAt,
-      updatedAt: chat.updatedAt,
-      messages: (chat.messages || []).map((m: any) => new Message(m)),
-    }));
-  } catch {
-    return [];
-  }
-}
-
-function persistBrowserDevChats(chats: BrowserDevChatRecord[]): void {
-  if (!isClient()) return;
-  localStorage.setItem(BROWSER_DEV_CHATS_KEY, JSON.stringify(chats));
-}
-
-function buildChatTitle(content: string): string {
-  const trimmed = content.trim();
-  return (trimmed || "New chat").slice(0, 60);
-}
-
-function upsertBrowserDevChat(chat: BrowserDevChatRecord): void {
-  const chats = loadBrowserDevChats();
-  const index = chats.findIndex((c) => c.id === chat.id);
-  if (index === -1) {
-    chats.push(chat);
-  } else {
-    chats[index] = chat;
-  }
-  persistBrowserDevChats(chats);
-}
-
-let browserDevSettings = loadBrowserDevSettings();
+let browserDevSettings = new Settings(defaultSettings);
 
 function normalizeApiPath(path: string): string {
   const withLeadingSlash = path.startsWith("/") ? path : `/${path}`;
@@ -249,48 +165,12 @@ export async function disconnectUser(): Promise<void> {
 }
 
 export async function getChats(): Promise<ChatsResponse> {
-  if (IS_BROWSER_DEV) {
-    const chatInfos = loadBrowserDevChats()
-      .sort(
-        (a, b) =>
-          new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
-      )
-      .map((chat) => ({
-        id: chat.id,
-        title: chat.title,
-        userExcerpt: chat.userExcerpt,
-        createdAt: chat.createdAt,
-        updatedAt: chat.updatedAt,
-      }));
-    return new ChatsResponse({ chatInfos });
-  }
-
   const response = await fetch(apiUrl("/v1/chats"));
   const data = await response.json();
   return new ChatsResponse(data);
 }
 
 export async function getChat(chatId: string): Promise<ChatResponse> {
-  if (IS_BROWSER_DEV) {
-    const chat = loadBrowserDevChats().find((c) => c.id === chatId);
-    if (!chat) {
-      return new ChatResponse({
-        chat: {
-          id: chatId,
-          messages: [],
-          title: "New chat",
-        },
-      });
-    }
-    return new ChatResponse({
-      chat: {
-        id: chat.id,
-        title: chat.title,
-        messages: chat.messages,
-      },
-    });
-  }
-
   const response = await fetch(apiUrl(`/v1/chat/${chatId}`));
   const data = await response.json();
   return new ChatResponse(data);
@@ -668,17 +548,6 @@ export async function updateCloudSetting(
 }
 
 export async function renameChat(chatId: string, title: string): Promise<void> {
-  if (IS_BROWSER_DEV) {
-    const chats = loadBrowserDevChats();
-    const chat = chats.find((c) => c.id === chatId);
-    if (chat) {
-      chat.title = title.trim();
-      chat.updatedAt = new Date().toISOString();
-      persistBrowserDevChats(chats);
-    }
-    return;
-  }
-
   const response = await fetch(apiUrl(`/v1/chat/${chatId}/rename`), {
     method: "PUT",
     headers: {
@@ -693,11 +562,6 @@ export async function renameChat(chatId: string, title: string): Promise<void> {
 }
 
 export async function deleteChat(chatId: string): Promise<void> {
-  if (IS_BROWSER_DEV) {
-    persistBrowserDevChats(loadBrowserDevChats().filter((c) => c.id !== chatId));
-    return;
-  }
-
   const response = await fetch(apiUrl(`/v1/chat/${chatId}`), {
     method: "DELETE",
   });
