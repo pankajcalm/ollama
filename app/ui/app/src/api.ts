@@ -57,7 +57,26 @@ const defaultSettings = new Settings({
   AutoUpdateEnabled: true,
 });
 
+
 let browserDevSettings = new Settings(defaultSettings);
+
+function normalizeApiPath(path: string): string {
+  const withLeadingSlash = path.startsWith("/") ? path : `/${path}`;
+  if (withLeadingSlash === "/api") {
+    return "/";
+  }
+  return withLeadingSlash.startsWith("/api/")
+    ? withLeadingSlash.slice(4)
+    : withLeadingSlash;
+}
+
+function apiUrl(path: string): string {
+  return desktopApiPath(normalizeApiPath(path));
+}
+
+function engineUrl(path: string): string {
+  return engineApiPath(normalizeApiPath(path));
+}
 // Helper function to convert Uint8Array to base64
 function uint8ArrayToBase64(uint8Array: Uint8Array): string {
   const chunkSize = 0x8000; // 32KB chunks to avoid stack overflow
@@ -72,7 +91,7 @@ function uint8ArrayToBase64(uint8Array: Uint8Array): string {
 }
 
 export async function fetchUser(): Promise<User | null> {
-  const response = await fetch(desktopApiPath("/api/me"), {
+  const response = await fetch(apiUrl("/me"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -101,7 +120,7 @@ export async function fetchUser(): Promise<User | null> {
 }
 
 export async function fetchConnectUrl(): Promise<string> {
-  const response = await fetch(desktopApiPath("/api/me"), {
+  const response = await fetch(apiUrl("/me"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -119,7 +138,7 @@ export async function fetchConnectUrl(): Promise<string> {
 }
 
 export async function disconnectUser(): Promise<void> {
-  const response = await fetch(desktopApiPath("/api/signout"), {
+  const response = await fetch(apiUrl("/signout"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -132,13 +151,13 @@ export async function disconnectUser(): Promise<void> {
 }
 
 export async function getChats(): Promise<ChatsResponse> {
-  const response = await fetch(desktopApiPath("/api/v1/chats"));
+  const response = await fetch(apiUrl("/v1/chats"));
   const data = await response.json();
   return new ChatsResponse(data);
 }
 
 export async function getChat(chatId: string): Promise<ChatResponse> {
-  const response = await fetch(desktopApiPath(`/api/v1/chat/${chatId}`));
+  const response = await fetch(apiUrl(`/v1/chat/${chatId}`));
   const data = await response.json();
   return new ChatResponse(data);
 }
@@ -285,7 +304,7 @@ export async function* sendMessage(
     think !== undefined &&
     (typeof think === "boolean" || (typeof think === "string" && think !== ""));
 
-  const response = await fetch(desktopApiPath(`/api/v1/chat/${chatId}`), {
+  const response = await fetch(apiUrl(`/v1/chat/${chatId}`), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -327,7 +346,7 @@ export async function getSettings(): Promise<{
   settings: Settings;
 }> {
   try {
-    const response = await fetch(desktopApiPath("/api/v1/settings"));
+    const response = await fetch(apiUrl("/v1/settings"));
     if (!response.ok) {
       if (IS_BROWSER_DEV && response.status === 404) {
         return { settings: browserDevSettings };
@@ -356,7 +375,7 @@ export async function updateSettings(settings: Settings): Promise<{
     };
   }
 
-  const response = await fetch(desktopApiPath("/api/v1/settings"), {
+  const response = await fetch(apiUrl("/v1/settings"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -383,7 +402,7 @@ export async function updateCloudSetting(
     };
   }
 
-  const response = await fetch(desktopApiPath("/api/v1/cloud"), {
+  const response = await fetch(apiUrl("/v1/cloud"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -403,7 +422,7 @@ export async function updateCloudSetting(
 }
 
 export async function renameChat(chatId: string, title: string): Promise<void> {
-  const response = await fetch(desktopApiPath(`/api/v1/chat/${chatId}/rename`), {
+  const response = await fetch(apiUrl(`/v1/chat/${chatId}/rename`), {
     method: "PUT",
     headers: {
       "Content-Type": "application/json",
@@ -417,7 +436,7 @@ export async function renameChat(chatId: string, title: string): Promise<void> {
 }
 
 export async function deleteChat(chatId: string): Promise<void> {
-  const response = await fetch(desktopApiPath(`/api/v1/chat/${chatId}`), {
+  const response = await fetch(apiUrl(`/v1/chat/${chatId}`), {
     method: "DELETE",
   });
   if (!response.ok) {
@@ -431,7 +450,7 @@ export async function getModelUpstreamInfo(
   model: Model,
 ): Promise<{ stale: boolean; exists: boolean; error?: string }> {
   try {
-    const response = await fetch(desktopApiPath("/api/v1/model/upstream"), {
+    const response = await fetch(apiUrl("/v1/model/upstream"), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -472,7 +491,7 @@ export async function* pullModel(
   completed?: number;
   done?: boolean;
 }> {
-  const response = await fetch(desktopApiPath("/api/v1/models/pull"), {
+  const response = await fetch(apiUrl("/v1/models/pull"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -498,7 +517,7 @@ export async function* pullModel(
 
 export async function getInferenceCompute(): Promise<InferenceComputeResponse> {
   try {
-    const response = await fetch(desktopApiPath("/api/v1/inference-compute"));
+    const response = await fetch(apiUrl("/v1/inference-compute"));
     if (!response.ok) {
       if (IS_BROWSER_DEV && response.status === 404) {
         return new InferenceComputeResponse({ inferenceComputes: [] });
@@ -521,13 +540,13 @@ export async function getInferenceCompute(): Promise<InferenceComputeResponse> {
 export async function fetchHealth(): Promise<boolean> {
   try {
     const [versionResponse, tagsResponse] = await Promise.all([
-      fetch(engineApiPath("/version"), {
+      fetch(engineUrl("/version"), {
         method: "GET",
         headers: {
           "Content-Type": "application/json",
         },
       }),
-      fetch(engineApiPath("/tags"), {
+      fetch(engineUrl("/tags"), {
         method: "GET",
         headers: {
           "Content-Type": "application/json",
@@ -553,7 +572,7 @@ export async function fetchHealth(): Promise<boolean> {
 
 export async function getCloudStatus(): Promise<CloudStatusResponse | null> {
   try {
-    const response = await fetch(desktopApiPath("/api/v1/cloud"));
+    const response = await fetch(apiUrl("/v1/cloud"));
     if (!response.ok) {
       if (IS_BROWSER_DEV && response.status === 404) {
         return {
