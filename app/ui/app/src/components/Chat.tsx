@@ -36,7 +36,7 @@ export default function Chat({ chatId }: { chatId: string }) {
   const navigate = useNavigate();
   const chatQuery = useChat(chatId === "new" ? "" : chatId);
   const chatErrorQuery = useChatError(chatId === "new" ? "" : chatId);
-  const { selectedModel } = useSelectedModel(chatId);
+  const { selectedModel, models, loading: modelsLoading } = useSelectedModel(chatId);
   const { user } = useUser();
   const hasVisionCapability = useHasVisionCapability(selectedModel?.model);
   const shouldShowStaleDisplay = useShouldShowStaleDisplay(selectedModel);
@@ -204,6 +204,11 @@ export default function Chat({ chatId }: { chatId: string }) {
     >
       {chatId === "new" ? (
         <div className="flex flex-col h-full justify-center relative bg-[var(--app-bg)]">
+          {!modelsLoading && models.length === 0 && (
+            <div className="mx-auto mb-4 w-full max-w-[768px] rounded-xl border border-[var(--app-border)] bg-[var(--panel-bg)] px-4 py-3 text-sm text-[var(--muted-fg)]">
+              No local models found. Pull a model from <strong>/models</strong> to start a new chat.
+            </div>
+          )}
           <div className="px-6">
             <ChatForm
               hasMessages={false}

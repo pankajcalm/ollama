@@ -172,7 +172,6 @@ export function useSelectedModel(currentChatId?: string, searchQuery?: string) {
   useEffect(() => {
     if (
       isLoading ||
-      inferenceComputes.length === 0 ||
       models.length === 0 ||
       settings.selectedModel
     ) {
