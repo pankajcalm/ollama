@@ -61,6 +61,16 @@ export default defineConfig(() => ({
     target: "es2017",
   },
 
+  server: {
+    proxy: {
+      "/api": {
+        target: "http://127.0.0.1:11434",
+        changeOrigin: true,
+        secure: false,
+      },
+    },
+  },
+
   esbuild: {
     target: "es2017",
   },

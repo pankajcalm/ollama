@@ -14,7 +14,12 @@ import {
 import { parseJsonlFromResponse } from "./util/jsonl-parsing";
 import { ollamaClient as ollama } from "./lib/ollama-client";
 import type { ModelResponse } from "ollama/browser";
-import { API_BASE, OLLAMA_DOT_COM } from "./lib/config";
+import {
+  IS_BROWSER_DEV,
+  desktopApiPath,
+  engineApiPath,
+  OLLAMA_DOT_COM,
+} from "./lib/config";
 
 // Extend Model class with utility methods
 declare module "@/gotypes" {
@@ -32,6 +37,27 @@ export interface CloudStatusResponse {
   disabled: boolean;
   source: CloudStatusSource;
 }
+
+const defaultSettings = new Settings({
+  Expose: false,
+  Browser: false,
+  Survey: false,
+  Models: "",
+  Agent: false,
+  Tools: false,
+  WorkingDir: "",
+  ContextLength: 0,
+  TurboEnabled: false,
+  WebSearchEnabled: false,
+  ThinkEnabled: false,
+  ThinkLevel: "none",
+  SelectedModel: "",
+  SidebarOpen: false,
+  LastHomeView: "chat",
+  AutoUpdateEnabled: true,
+});
+
+let browserDevSettings = new Settings(defaultSettings);
 // Helper function to convert Uint8Array to base64
 function uint8ArrayToBase64(uint8Array: Uint8Array): string {
   const chunkSize = 0x8000; // 32KB chunks to avoid stack overflow
@@ -46,7 +72,7 @@ function uint8ArrayToBase64(uint8Array: Uint8Array): string {
 }
 
 export async function fetchUser(): Promise<User | null> {
-  const response = await fetch(`${API_BASE}/api/me`, {
+  const response = await fetch(desktopApiPath("/api/me"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -67,11 +93,15 @@ export async function fetchUser(): Promise<User | null> {
     return null;
   }
 
+  if (IS_BROWSER_DEV && response.status === 404) {
+    return null;
+  }
+
   throw new Error(`Failed to fetch user: ${response.status}`);
 }
 
 export async function fetchConnectUrl(): Promise<string> {
-  const response = await fetch(`${API_BASE}/api/me`, {
+  const response = await fetch(desktopApiPath("/api/me"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -89,7 +119,7 @@ export async function fetchConnectUrl(): Promise<string> {
 }
 
 export async function disconnectUser(): Promise<void> {
-  const response = await fetch(`${API_BASE}/api/signout`, {
+  const response = await fetch(desktopApiPath("/api/signout"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -102,13 +132,13 @@ export async function disconnectUser(): Promise<void> {
 }
 
 export async function getChats(): Promise<ChatsResponse> {
-  const response = await fetch(`${API_BASE}/api/v1/chats`);
+  const response = await fetch(desktopApiPath("/api/v1/chats"));
   const data = await response.json();
   return new ChatsResponse(data);
 }
 
 export async function getChat(chatId: string): Promise<ChatResponse> {
-  const response = await fetch(`${API_BASE}/api/v1/chat/${chatId}`);
+  const response = await fetch(desktopApiPath(`/api/v1/chat/${chatId}`));
   const data = await response.json();
   return new ChatResponse(data);
 }
@@ -255,7 +285,7 @@ export async function* sendMessage(
     think !== undefined &&
     (typeof think === "boolean" || (typeof think === "string" && think !== ""));
 
-  const response = await fetch(`${API_BASE}/api/v1/chat/${chatId}`, {
+  const response = await fetch(desktopApiPath(`/api/v1/chat/${chatId}`), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -296,20 +326,37 @@ export async function* sendMessage(
 export async function getSettings(): Promise<{
   settings: Settings;
 }> {
-  const response = await fetch(`${API_BASE}/api/v1/settings`);
-  if (!response.ok) {
-    throw new Error("Failed to fetch settings");
+  try {
+    const response = await fetch(desktopApiPath("/api/v1/settings"));
+    if (!response.ok) {
+      if (IS_BROWSER_DEV && response.status === 404) {
+        return { settings: browserDevSettings };
+      }
+      throw new Error("Failed to fetch settings");
+    }
+    const data = await response.json();
+    return {
+      settings: new Settings(data.settings),
+    };
+  } catch (error) {
+    if (IS_BROWSER_DEV) {
+      return { settings: browserDevSettings };
+    }
+    throw error;
   }
-  const data = await response.json();
-  return {
-    settings: new Settings(data.settings),
-  };
 }
 
 export async function updateSettings(settings: Settings): Promise<{
   settings: Settings;
 }> {
-  const response = await fetch(`${API_BASE}/api/v1/settings`, {
+  if (IS_BROWSER_DEV) {
+    browserDevSettings = new Settings(settings);
+    return {
+      settings: browserDevSettings,
+    };
+  }
+
+  const response = await fetch(desktopApiPath("/api/v1/settings"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -329,7 +376,14 @@ export async function updateSettings(settings: Settings): Promise<{
 export async function updateCloudSetting(
   enabled: boolean,
 ): Promise<CloudStatusResponse> {
-  const response = await fetch(`${API_BASE}/api/v1/cloud`, {
+  if (IS_BROWSER_DEV) {
+    return {
+      disabled: !enabled,
+      source: "config",
+    };
+  }
+
+  const response = await fetch(desktopApiPath("/api/v1/cloud"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -349,7 +403,7 @@ export async function updateCloudSetting(
 }
 
 export async function renameChat(chatId: string, title: string): Promise<void> {
-  const response = await fetch(`${API_BASE}/api/v1/chat/${chatId}/rename`, {
+  const response = await fetch(desktopApiPath(`/api/v1/chat/${chatId}/rename`), {
     method: "PUT",
     headers: {
       "Content-Type": "application/json",
@@ -363,7 +417,7 @@ export async function renameChat(chatId: string, title: string): Promise<void> {
 }
 
 export async function deleteChat(chatId: string): Promise<void> {
-  const response = await fetch(`${API_BASE}/api/v1/chat/${chatId}`, {
+  const response = await fetch(desktopApiPath(`/api/v1/chat/${chatId}`), {
     method: "DELETE",
   });
   if (!response.ok) {
@@ -377,7 +431,7 @@ export async function getModelUpstreamInfo(
   model: Model,
 ): Promise<{ stale: boolean; exists: boolean; error?: string }> {
   try {
-    const response = await fetch(`${API_BASE}/api/v1/model/upstream`, {
+    const response = await fetch(desktopApiPath("/api/v1/model/upstream"), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -418,7 +472,7 @@ export async function* pullModel(
   completed?: number;
   done?: boolean;
 }> {
-  const response = await fetch(`${API_BASE}/api/v1/models/pull`, {
+  const response = await fetch(desktopApiPath("/api/v1/models/pull"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -443,34 +497,54 @@ export async function* pullModel(
 }
 
 export async function getInferenceCompute(): Promise<InferenceComputeResponse> {
-  const response = await fetch(`${API_BASE}/api/v1/inference-compute`);
-  if (!response.ok) {
-    throw new Error(
-      `Failed to fetch inference compute: ${response.statusText}`,
-    );
-  }
+  try {
+    const response = await fetch(desktopApiPath("/api/v1/inference-compute"));
+    if (!response.ok) {
+      if (IS_BROWSER_DEV && response.status === 404) {
+        return new InferenceComputeResponse({ inferenceComputes: [] });
+      }
+      throw new Error(
+        `Failed to fetch inference compute: ${response.statusText}`,
+      );
+    }
 
-  const data = await response.json();
-  return new InferenceComputeResponse(data);
+    const data = await response.json();
+    return new InferenceComputeResponse(data);
+  } catch (error) {
+    if (IS_BROWSER_DEV) {
+      return new InferenceComputeResponse({ inferenceComputes: [] });
+    }
+    throw error;
+  }
 }
 
 export async function fetchHealth(): Promise<boolean> {
   try {
-    // Use the /api/version endpoint as a health check
-    const response = await fetch(`${API_BASE}/api/version`, {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-      },
-    });
+    const [versionResponse, tagsResponse] = await Promise.all([
+      fetch(engineApiPath("/version"), {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      }),
+      fetch(engineApiPath("/tags"), {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      }),
+    ]);
 
-    if (response.ok) {
-      const data = await response.json();
-      // If we get a version back, the server is healthy
-      return !!data.version;
+    if (!versionResponse.ok || !tagsResponse.ok) {
+      return false;
     }
 
-    return false;
+    const [versionData, tagsData] = await Promise.all([
+      versionResponse.json(),
+      tagsResponse.json(),
+    ]);
+
+    return Boolean(versionData?.version && Array.isArray(tagsData?.models));
   } catch (error) {
     console.error("Error checking health:", error);
     return false;
@@ -478,14 +552,30 @@ export async function fetchHealth(): Promise<boolean> {
 }
 
 export async function getCloudStatus(): Promise<CloudStatusResponse | null> {
-  const response = await fetch(`${API_BASE}/api/v1/cloud`);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch cloud status: ${response.status}`);
-  }
+  try {
+    const response = await fetch(desktopApiPath("/api/v1/cloud"));
+    if (!response.ok) {
+      if (IS_BROWSER_DEV && response.status === 404) {
+        return {
+          disabled: true,
+          source: "none",
+        };
+      }
+      throw new Error(`Failed to fetch cloud status: ${response.status}`);
+    }
 
-  const data = await response.json();
-  return {
-    disabled: Boolean(data.disabled),
-    source: (data.source as CloudStatusSource) || "none",
-  };
+    const data = await response.json();
+    return {
+      disabled: Boolean(data.disabled),
+      source: (data.source as CloudStatusSource) || "none",
+    };
+  } catch (error) {
+    if (IS_BROWSER_DEV) {
+      return {
+        disabled: true,
+        source: "none",
+      };
+    }
+    throw error;
+  }
 }

@@ -17,11 +17,15 @@ const queryClient = new QueryClient({
   },
 });
 
-fetchUser().then((userData) => {
-  if (userData) {
-    queryClient.setQueryData(["user"], userData);
-  }
-});
+fetchUser()
+  .then((userData) => {
+    if (userData) {
+      queryClient.setQueryData(["user"], userData);
+    }
+  })
+  .catch(() => {
+    // Browser-dev mode may not provide desktop auth endpoints.
+  });
 
 const router = createRouter({
   routeTree,
