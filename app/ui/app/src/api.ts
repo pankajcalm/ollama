@@ -7,6 +7,7 @@ import {
   InferenceComputeResponse,
   ModelCapabilitiesResponse,
   Model,
+  Message,
   ChatRequest,
   Settings,
   User,
@@ -37,6 +38,19 @@ export interface CloudStatusResponse {
   disabled: boolean;
   source: CloudStatusSource;
 }
+
+const BROWSER_DEV_SETTINGS_KEY = "ollama.browserDev.settings";
+const BROWSER_DEV_CHATS_KEY = "ollama.browserDev.chats";
+const BROWSER_DEV_CLOUD_DISABLED_KEY = "ollama.browserDev.cloudDisabled";
+
+type BrowserDevChatRecord = {
+  id: string;
+  title: string;
+  userExcerpt: string;
+  createdAt: string;
+  updatedAt: string;
+  messages: Message[];
+};
 
 const defaultSettings = new Settings({
   Expose: false,
@@ -293,6 +307,112 @@ export async function* sendMessage(
   forceUpdate?: boolean,
   think?: boolean | string,
 ): AsyncGenerator<ChatEventUnion> {
+  if (IS_BROWSER_DEV) {
+    const now = new Date().toISOString();
+    const activeChatId =
+      chatId === "new"
+        ? `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+        : chatId;
+    const chats = loadBrowserDevChats();
+    const existing = chats.find((c) => c.id === activeChatId);
+    const existingMessages = existing?.messages || [];
+    const nextMessages =
+      index !== undefined && index >= 0 && index < existingMessages.length
+        ? existingMessages.slice(0, index)
+        : [...existingMessages];
+
+    if (message.trim() !== "") {
+      nextMessages.push(
+        new Message({
+          role: "user",
+          content: message,
+          model: model.model,
+          attachments,
+        }),
+      );
+    }
+
+    const initialChat: BrowserDevChatRecord = {
+      id: activeChatId,
+      title: existing?.title || buildChatTitle(message),
+      userExcerpt: message.trim().slice(0, 120),
+      createdAt: existing?.createdAt || now,
+      updatedAt: now,
+      messages: nextMessages,
+    };
+
+    upsertBrowserDevChat(initialChat);
+
+    if (chatId === "new") {
+      yield new ChatEvent({ eventName: "chat_created", chatId: activeChatId });
+    }
+
+    const ollamaMessages = nextMessages
+      .filter((m) => m.role === "user" || m.role === "assistant" || m.role === "system")
+      .map((m) => ({
+        role: m.role,
+        content: m.content || "",
+      }));
+
+    const response = await fetch(engineUrl("/chat"), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: model.model,
+        messages: ollamaMessages,
+        stream: true,
+      }),
+      signal,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      yield new ErrorEvent({
+        eventName: "error",
+        error: errorText || `Chat request failed (${response.status})`,
+      });
+      return;
+    }
+
+    let assistantContent = "";
+    for await (const chunk of parseJsonlFromResponse<any>(response)) {
+      const token = chunk?.message?.content || "";
+      if (token) {
+        assistantContent += token;
+        yield new ChatEvent({ eventName: "chat", content: token });
+      }
+      if (chunk?.done) {
+        break;
+      }
+    }
+
+    const finalChats = loadBrowserDevChats();
+    const finalExisting = finalChats.find((c) => c.id === activeChatId);
+    if (finalExisting) {
+      finalExisting.messages = [
+        ...finalExisting.messages,
+        new Message({
+          role: "assistant",
+          content: assistantContent,
+          model: model.model,
+        }),
+      ];
+      finalExisting.updatedAt = new Date().toISOString();
+      if (!finalExisting.title || finalExisting.title === "New chat") {
+        finalExisting.title = buildChatTitle(message);
+      }
+      if (!finalExisting.userExcerpt) {
+        finalExisting.userExcerpt = message.trim().slice(0, 120);
+      }
+      persistBrowserDevChats(finalChats);
+    }
+
+    yield new ChatEvent({ eventName: "done" });
+    return;
+  }
+
   // Convert Uint8Array to base64 for JSON serialization
   const serializedAttachments = attachments?.map((att) => ({
     filename: att.filename,
@@ -345,6 +465,10 @@ export async function* sendMessage(
 export async function getSettings(): Promise<{
   settings: Settings;
 }> {
+  if (IS_BROWSER_DEV) {
+    return { settings: browserDevSettings };
+  }
+
   try {
     const response = await fetch(apiUrl("/v1/settings"));
     if (!response.ok) {
@@ -370,6 +494,7 @@ export async function updateSettings(settings: Settings): Promise<{
 }> {
   if (IS_BROWSER_DEV) {
     browserDevSettings = new Settings(settings);
+    persistBrowserDevSettings(browserDevSettings);
     return {
       settings: browserDevSettings,
     };
@@ -396,6 +521,7 @@ export async function updateCloudSetting(
   enabled: boolean,
 ): Promise<CloudStatusResponse> {
   if (IS_BROWSER_DEV) {
+    persistBrowserDevCloudDisabled(!enabled);
     return {
       disabled: !enabled,
       source: "config",
@@ -516,6 +642,10 @@ export async function* pullModel(
 }
 
 export async function getInferenceCompute(): Promise<InferenceComputeResponse> {
+  if (IS_BROWSER_DEV) {
+    return new InferenceComputeResponse({ inferenceComputes: [] });
+  }
+
   try {
     const response = await fetch(apiUrl("/v1/inference-compute"));
     if (!response.ok) {
@@ -571,6 +701,13 @@ export async function fetchHealth(): Promise<boolean> {
 }
 
 export async function getCloudStatus(): Promise<CloudStatusResponse | null> {
+  if (IS_BROWSER_DEV) {
+    return {
+      disabled: loadBrowserDevCloudDisabled(),
+      source: "config",
+    };
+  }
+
   try {
     const response = await fetch(apiUrl("/v1/cloud"));
     if (!response.ok) {
