@@ -72,7 +72,69 @@ const defaultSettings = new Settings({
 });
 
 
-let browserDevSettings = new Settings(defaultSettings);
+function buildChatTitle(message: string): string {
+  const trimmed = message.trim()
+  if (!trimmed) return "New chat"
+  return trimmed.length > 60 ? `${trimmed.slice(0, 60).trim()}…` : trimmed
+}
+
+function persistBrowserDevSettings(settings: Settings): void {
+  if (typeof window === "undefined") return
+  localStorage.setItem(BROWSER_DEV_SETTINGS_KEY, JSON.stringify(settings))
+}
+
+function loadBrowserDevSettings(): Settings {
+  if (typeof window === "undefined") return new Settings(defaultSettings)
+
+  const raw = localStorage.getItem(BROWSER_DEV_SETTINGS_KEY)
+  if (!raw) return new Settings(defaultSettings)
+
+  try {
+    return new Settings(JSON.parse(raw))
+  } catch {
+    return new Settings(defaultSettings)
+  }
+}
+
+function loadBrowserDevChats(): BrowserDevChatRecord[] {
+  if (typeof window === "undefined") return []
+
+  const raw = localStorage.getItem(BROWSER_DEV_CHATS_KEY)
+  if (!raw) return []
+
+  try {
+    return JSON.parse(raw) as BrowserDevChatRecord[]
+  } catch {
+    return []
+  }
+}
+
+function persistBrowserDevChats(chats: BrowserDevChatRecord[]): void {
+  if (typeof window === "undefined") return
+  localStorage.setItem(BROWSER_DEV_CHATS_KEY, JSON.stringify(chats))
+}
+
+function upsertBrowserDevChat(chat: BrowserDevChatRecord): void {
+  const chats = loadBrowserDevChats()
+  const idx = chats.findIndex((c) => c.id === chat.id)
+
+  if (idx >= 0) chats[idx] = chat
+  else chats.unshift(chat)
+
+  persistBrowserDevChats(chats)
+}
+
+function loadBrowserDevCloudDisabled(): boolean {
+  if (typeof window === "undefined") return true
+  return localStorage.getItem(BROWSER_DEV_CLOUD_DISABLED_KEY) === "true"
+}
+
+function persistBrowserDevCloudDisabled(disabled: boolean): void {
+  if (typeof window === "undefined") return
+  localStorage.setItem(BROWSER_DEV_CLOUD_DISABLED_KEY, String(disabled))
+}
+
+let browserDevSettings = loadBrowserDevSettings()
 
 function normalizeApiPath(path: string): string {
   const withLeadingSlash = path.startsWith("/") ? path : `/${path}`;
@@ -165,15 +227,37 @@ export async function disconnectUser(): Promise<void> {
 }
 
 export async function getChats(): Promise<ChatsResponse> {
-  const response = await fetch(apiUrl("/v1/chats"));
-  const data = await response.json();
-  return new ChatsResponse(data);
+  if (IS_BROWSER_DEV) {
+    const chats = loadBrowserDevChats().map((c) => ({
+      id: c.id,
+      title: c.title,
+      user_excerpt: c.userExcerpt,
+      created_at: c.createdAt,
+      updated_at: c.updatedAt,
+    }))
+    return new ChatsResponse({ chats })
+  }
+
+  const response = await fetch(apiUrl("/v1/chats"))
+  const data = await response.json()
+  return new ChatsResponse(data)
 }
 
 export async function getChat(chatId: string): Promise<ChatResponse> {
-  const response = await fetch(apiUrl(`/v1/chat/${chatId}`));
-  const data = await response.json();
-  return new ChatResponse(data);
+  if (IS_BROWSER_DEV) {
+    const chat = loadBrowserDevChats().find((c) => c.id === chatId)
+	 return new ChatResponse({
+	  chat: new Chat({
+		id: chatId,
+		title: chat?.title || "New chat",
+		messages: chat?.messages || [],
+	  }),
+	})
+  }
+
+  const response = await fetch(apiUrl(`/v1/chat/${chatId}`))
+  const data = await response.json()
+  return new ChatResponse(data)
 }
 
 export async function getModels(query?: string): Promise<Model[]> {
@@ -548,62 +632,64 @@ export async function updateCloudSetting(
 }
 
 export async function renameChat(chatId: string, title: string): Promise<void> {
+  if (IS_BROWSER_DEV) {
+    const chats = loadBrowserDevChats()
+    const chat = chats.find((c) => c.id === chatId)
+    if (chat) {
+      chat.title = title.trim()
+      chat.updatedAt = new Date().toISOString()
+      persistBrowserDevChats(chats)
+    }
+    return
+  }
+
   const response = await fetch(apiUrl(`/v1/chat/${chatId}/rename`), {
     method: "PUT",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ title: title.trim() }),
-  });
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(error || "Failed to rename chat");
-  }
+  })
+  if (!response.ok) throw new Error(await response.text() || "Failed to rename chat")
 }
 
 export async function deleteChat(chatId: string): Promise<void> {
+  if (IS_BROWSER_DEV) {
+    persistBrowserDevChats(loadBrowserDevChats().filter((c) => c.id !== chatId))
+    return
+  }
+
   const response = await fetch(apiUrl(`/v1/chat/${chatId}`), {
     method: "DELETE",
-  });
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(error || "Failed to delete chat");
-  }
+  })
+  if (!response.ok) throw new Error(await response.text() || "Failed to delete chat")
 }
 
 // Get upstream information for model staleness checking
 export async function getModelUpstreamInfo(
   model: Model,
 ): Promise<{ stale: boolean; exists: boolean; error?: string }> {
+  if (IS_BROWSER_DEV) {
+    return { stale: false, exists: false }
+  }
+
   try {
     const response = await fetch(apiUrl("/v1/model/upstream"), {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: model.model,
-      }),
-    });
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: model.model }),
+    })
 
     if (!response.ok) {
-      console.warn(
-        `Failed to check upstream for ${model.model}: ${response.status}`,
-      );
-      return { stale: false, exists: false };
+      return { stale: false, exists: false }
     }
 
-    const data = await response.json();
-
+    const data = await response.json()
     if (data.error) {
-      console.warn(`Upstream check: ${data.error}`);
-      return { stale: false, exists: false, error: data.error };
+      return { stale: false, exists: false, error: data.error }
     }
 
-    return { stale: !!data.stale, exists: true };
+    return { stale: !!data.stale, exists: true }
   } catch (error) {
-    console.warn(`Error checking model staleness:`, error);
-    return { stale: false, exists: false };
+    return { stale: false, exists: false }
   }
 }
 
